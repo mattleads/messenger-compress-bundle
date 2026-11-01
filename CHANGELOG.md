@@ -4,11 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-01
+
 ### Fixed
 - On Messenger >= 8.1, undecodable payloads (wrong key, tampered ciphertext, corrupt compression) are now *returned* as a wrapped `MessageDecodingFailedException` envelope that keeps the stamps decodable from the headers, instead of being thrown. Retries are therefore counted and the message reaches the failure transport instead of being retried forever at "retry #1".
 - Re-sending a wrapped decoding failure (retry / failure transport) passes through the serializer untouched instead of being compressed or encrypted a second time.
 
-[Unreleased]: https://github.com/mattleads/messenger-compress-bundle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mattleads/messenger-compress-bundle/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mattleads/messenger-compress-bundle/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mattleads/messenger-compress-bundle/releases/tag/v0.1.0
 
 ## [0.1.0] - 2026-11-01
