@@ -277,7 +277,7 @@ final class PayloadTransformingSerializerTest extends TestCase
     }
 
     /**
-     * Messenger >= 7.4: decode() returns an envelope wrapping MessageDecodingFailedException with the original encoded
+     * Messenger >= 8.1: decode() returns an envelope wrapping MessageDecodingFailedException with the original encoded
      * envelope (so it can be re-sent) — older versions: decode() throws. Accept both.
      *
      * @param array{body: string, headers?: array<string, string>} $encoded
@@ -302,7 +302,7 @@ final class PayloadTransformingSerializerTest extends TestCase
     public function testDecodingFailureKeepsHeaderStampsSoRetriesAreCounted(): void
     {
         if (!self::wrapsFailures() || !class_exists(SymfonySerializer::class)) {
-            self::markTestSkipped('needs Messenger >= 7.4 and symfony/serializer');
+            self::markTestSkipped('needs Messenger >= 8.1 and symfony/serializer');
         }
         $inner = new MessengerSerializer();
         $serializer = new PayloadTransformingSerializer($inner, new CompressorRegistry([new DeflateCompressor()]), new SodiumEncryptor(), $this->keyRing, new CompressionPolicy(), new EncryptionPolicy(enabled: true));

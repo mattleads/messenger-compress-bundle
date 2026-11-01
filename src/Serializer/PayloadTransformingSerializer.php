@@ -53,7 +53,7 @@ final class PayloadTransformingSerializer implements SerializerInterface
     public function encode(Envelope $envelope): array
     {
         if ($envelope->getMessage() instanceof MessageDecodingFailedException) {
-            // Messenger (>= 7.4) re-sends an undecodable message for retry / to the failure transport by replaying
+            // Messenger (>= 8.1) re-sends an undecodable message for retry / to the failure transport by replaying
             // its original encoded envelope, which already carries our headers and transformed body. Pass through.
             return $this->inner->encode($envelope);
         }
@@ -177,7 +177,7 @@ final class PayloadTransformingSerializer implements SerializerInterface
     /**
      * Report an undecodable payload the way Messenger expects.
      *
-     * Messenger >= 7.4 wants serializers to *return* an envelope wrapping a MessageDecodingFailedException (with the
+     * Messenger >= 8.1 wants serializers to *return* an envelope wrapping a MessageDecodingFailedException (with the
      * original encoded envelope, so it can be re-sent verbatim) rather than throw. Returning also lets us keep the
      * stamps that are still decodable from the headers — RedeliveryStamp in particular — so retries are counted and
      * the message ends up on the failure transport instead of being retried forever. On older Messenger we throw.
@@ -214,7 +214,7 @@ final class PayloadTransformingSerializer implements SerializerInterface
         return MessageDecodingFailedException::wrap($original, $message, 0, $previous)->with(...$stamps);
     }
 
-    /** Messenger >= 7.4 ships MessageDecodingFailedException::wrap() and expects serializers to return failures. */
+    /** Messenger >= 8.1 ships MessageDecodingFailedException::wrap() and expects serializers to return failures. */
     private static function supportsWrappedFailures(): bool
     {
         static $supported = null;
