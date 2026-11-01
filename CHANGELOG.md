@@ -4,7 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.1.0] - TBD
+[Unreleased]: https://github.com/mattleads/messenger-compress-bundle/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mattleads/messenger-compress-bundle/releases/tag/v0.1.0
+
+## [0.1.0] - 2026-11-01
 
 ### Added
 - `PayloadTransformingSerializer`: decorates any Messenger transport serializer with compression and authenticated encryption.
