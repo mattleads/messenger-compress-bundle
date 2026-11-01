@@ -52,6 +52,12 @@ final class PayloadTransformingSerializer implements SerializerInterface
 
     public function encode(Envelope $envelope): array
     {
+        if ($envelope->getMessage() instanceof MessageDecodingFailedException) {
+            // Messenger (>= 7.4) re-sends an undecodable message for retry / to the failure transport by replaying
+            // its original encoded envelope, which already carries our headers and transformed body. Pass through.
+            return $this->inner->encode($envelope);
+        }
+
         $encoded = $this->inner->encode($envelope);
         /** @var string $body */
         $body = $encoded['body'];
@@ -118,14 +124,17 @@ final class PayloadTransformingSerializer implements SerializerInterface
             return $this->inner->decode($encodedEnvelope);
         }
 
-        /** @var string $body */
-        $body = $encodedEnvelope['body'] ?? throw new MessageDecodingFailedException('Encoded envelope should have at least a "body".');
+        $original = $encodedEnvelope;
+        if (!isset($encodedEnvelope['body']) || !\is_string($encodedEnvelope['body'])) {
+            return $this->fail($original, 'Encoded envelope should have at least a "body".');
+        }
+        $body = $encodedEnvelope['body'];
         $wireSize = \strlen($body);
 
         if ('base64' === ($headers[self::HEADER_ENCODING] ?? null)) {
             $decoded = base64_decode($body, true);
             if (false === $decoded) {
-                throw new MessageDecodingFailedException('Payload is marked base64 but is not valid base64.');
+                return $this->fail($original, 'Payload is marked base64 but is not valid base64.');
             }
             $body = $decoded;
         }
@@ -133,16 +142,19 @@ final class PayloadTransformingSerializer implements SerializerInterface
         $keyId = null;
         if (null !== $encryption) {
             if (null === $this->encryptor || null === $this->keyRing) {
-                throw new MessageDecodingFailedException('Received an encrypted message but encryption is not configured on this consumer.');
+                return $this->fail($original, 'Received an encrypted message but encryption is not configured on this consumer.');
             }
             if ($encryption !== $this->encryptor->name()) {
-                throw new MessageDecodingFailedException(\sprintf('Message was encrypted with "%s" but this consumer uses "%s".', $encryption, $this->encryptor->name()));
+                return $this->fail($original, \sprintf('Message was encrypted with "%s" but this consumer uses "%s".', $encryption, $this->encryptor->name()));
             }
-            $keyId = $headers[self::HEADER_KEY_ID] ?? throw new MessageDecodingFailedException('Encrypted message is missing the X-Encryption-Key-Id header.');
+            $keyId = $headers[self::HEADER_KEY_ID] ?? null;
+            if (null === $keyId) {
+                return $this->fail($original, 'Encrypted message is missing the X-Encryption-Key-Id header.');
+            }
             try {
                 $body = $this->encryptor->decrypt($body, $this->keyRing->get($keyId));
             } catch (UnknownKeyException|DecryptionFailedException $e) {
-                throw new MessageDecodingFailedException($e->getMessage(), 0, $e);
+                return $this->fail($original, $e->getMessage(), $e);
             }
         }
 
@@ -150,7 +162,7 @@ final class PayloadTransformingSerializer implements SerializerInterface
             try {
                 $body = $this->compressors->get($compression)->decompress($body);
             } catch (UnsupportedAlgorithmException|CompressionException $e) {
-                throw new MessageDecodingFailedException($e->getMessage(), 0, $e);
+                return $this->fail($original, $e->getMessage(), $e);
             }
         }
 
@@ -160,5 +172,53 @@ final class PayloadTransformingSerializer implements SerializerInterface
 
         return $this->inner->decode($encodedEnvelope)
             ->with(new TransformedStamp($compression, $encryption, $keyId, $wireSize, \strlen($body)));
+    }
+
+    /**
+     * Report an undecodable payload the way Messenger expects.
+     *
+     * Messenger >= 7.4 wants serializers to *return* an envelope wrapping a MessageDecodingFailedException (with the
+     * original encoded envelope, so it can be re-sent verbatim) rather than throw. Returning also lets us keep the
+     * stamps that are still decodable from the headers — RedeliveryStamp in particular — so retries are counted and
+     * the message ends up on the failure transport instead of being retried forever. On older Messenger we throw.
+     *
+     * @param array{body?: mixed, headers?: array<string, string>} $original
+     */
+    private function fail(array $original, string $message, ?\Throwable $previous = null): Envelope
+    {
+        if (!self::supportsWrappedFailures()) {
+            throw new MessageDecodingFailedException($message, 0, $previous);
+        }
+
+        // Ask the inner serializer to decode the *headers* only: with the type header pointing at the failure class,
+        // Symfony's serializer short-circuits before touching the body and returns a wrapped failure carrying the
+        // stamps it could decode.
+        $stamps = [];
+        try {
+            $probe = [
+                'body' => \is_string($original['body'] ?? null) ? $original['body'] : '',
+                'headers' => ['type' => MessageDecodingFailedException::class] + ($original['headers'] ?? []),
+            ];
+            $probed = $this->inner->decode($probe);
+            if ($probed->getMessage() instanceof MessageDecodingFailedException) {
+                foreach ($probed->all() as $list) {
+                    foreach ($list as $stamp) {
+                        $stamps[] = $stamp;
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // best effort: no stamps recovered
+        }
+
+        return MessageDecodingFailedException::wrap($original, $message, 0, $previous)->with(...$stamps);
+    }
+
+    /** Messenger >= 7.4 ships MessageDecodingFailedException::wrap() and expects serializers to return failures. */
+    private static function supportsWrappedFailures(): bool
+    {
+        static $supported = null;
+
+        return $supported ??= (new \ReflectionClass(MessageDecodingFailedException::class))->hasMethod('wrap');
     }
 }

@@ -20,6 +20,9 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
+use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
+use Symfony\Component\Messenger\Transport\Serialization\Serializer as MessengerSerializer;
+use Symfony\Component\Serializer\Serializer as SymfonySerializer;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
@@ -230,9 +233,7 @@ final class PayloadTransformingSerializerTest extends TestCase
         $encoded = $this->serializer()->encode($this->envelope()->with(new EncryptStamp()));
         $encoded['headers'][PayloadTransformingSerializer::HEADER_KEY_ID] = 'nope';
 
-        $this->expectException(MessageDecodingFailedException::class);
-        $this->expectExceptionMessage('No encryption key with id "nope"');
-        $this->serializer()->decode($encoded);
+        $this->assertDecodingFailure(fn() => $this->serializer()->decode($encoded), 'No encryption key with id "nope"', $encoded);
     }
 
     public function testTamperedBodyBecomesDecodingFailure(): void
@@ -242,8 +243,7 @@ final class PayloadTransformingSerializerTest extends TestCase
         $raw[40] = \chr(\ord($raw[40]) ^ 0xFF);
         $encoded['body'] = base64_encode($raw);
 
-        $this->expectException(MessageDecodingFailedException::class);
-        $this->serializer()->decode($encoded);
+        $this->assertDecodingFailure(fn() => $this->serializer()->decode($encoded), 'authentication tag mismatch', $encoded);
     }
 
     public function testCorruptCompressedBodyBecomesDecodingFailure(): void
@@ -251,8 +251,7 @@ final class PayloadTransformingSerializerTest extends TestCase
         $encoded = $this->serializer()->encode($this->envelope()->with(new CompressStamp()));
         $encoded['body'] = base64_encode('not deflate');
 
-        $this->expectException(MessageDecodingFailedException::class);
-        $this->serializer()->decode($encoded);
+        $this->assertDecodingFailure(fn() => $this->serializer()->decode($encoded), 'not valid deflate data', $encoded);
     }
 
     public function testUnknownCompressionAlgorithmOnDecodeBecomesDecodingFailure(): void
@@ -260,8 +259,7 @@ final class PayloadTransformingSerializerTest extends TestCase
         $encoded = $this->serializer()->encode($this->envelope()->with(new CompressStamp()));
         $encoded['headers'][PayloadTransformingSerializer::HEADER_COMPRESSION] = 'brotli';
 
-        $this->expectException(MessageDecodingFailedException::class);
-        $this->serializer()->decode($encoded);
+        $this->assertDecodingFailure(fn() => $this->serializer()->decode($encoded), 'Unknown compression algorithm "brotli"', $encoded);
     }
 
     public function testEncryptedMessageOnConsumerWithoutEncryptionBecomesDecodingFailure(): void
@@ -269,14 +267,65 @@ final class PayloadTransformingSerializerTest extends TestCase
         $encoded = $this->serializer()->encode($this->envelope()->with(new EncryptStamp()));
         $consumer = new PayloadTransformingSerializer(new PhpSerializer(), new CompressorRegistry([new DeflateCompressor()]), null, null);
 
-        $this->expectException(MessageDecodingFailedException::class);
-        $consumer->decode($encoded);
+        $this->assertDecodingFailure(static fn() => $consumer->decode($encoded), 'encryption is not configured on this consumer', $encoded);
     }
 
     public function testInvalidEncodingIsRejected(): void
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->serializer(encoding: 'hex');
+    }
+
+    /**
+     * Messenger >= 7.4: decode() returns an envelope wrapping MessageDecodingFailedException with the original encoded
+     * envelope (so it can be re-sent) — older versions: decode() throws. Accept both.
+     *
+     * @param array{body: string, headers?: array<string, string>} $encoded
+     */
+    private function assertDecodingFailure(callable $decode, string $expectedMessage, array $encoded): void
+    {
+        try {
+            $result = $decode();
+        } catch (MessageDecodingFailedException $e) {
+            self::assertFalse(self::wrapsFailures(), 'modern Messenger should return, not throw');
+            self::assertStringContainsString($expectedMessage, $e->getMessage());
+
+            return;
+        }
+        self::assertInstanceOf(Envelope::class, $result);
+        $failure = $result->getMessage();
+        self::assertInstanceOf(MessageDecodingFailedException::class, $failure);
+        self::assertStringContainsString($expectedMessage, $failure->getMessage());
+        self::assertSame($encoded, $failure->encodedEnvelope, 'the original encoded envelope is kept for re-sending');
+    }
+
+    public function testDecodingFailureKeepsHeaderStampsSoRetriesAreCounted(): void
+    {
+        if (!self::wrapsFailures() || !class_exists(SymfonySerializer::class)) {
+            self::markTestSkipped('needs Messenger >= 7.4 and symfony/serializer');
+        }
+        $inner = new MessengerSerializer();
+        $serializer = new PayloadTransformingSerializer($inner, new CompressorRegistry([new DeflateCompressor()]), new SodiumEncryptor(), $this->keyRing, new CompressionPolicy(), new EncryptionPolicy(enabled: true));
+
+        // a message that was already retried twice, then tampered with in the broker
+        $encoded = $serializer->encode($this->envelope()->with(new EncryptStamp(), new RedeliveryStamp(2)));
+        $raw = (string) base64_decode($encoded['body'], true);
+        $raw[40] = \chr(\ord($raw[40]) ^ 0xFF);
+        $encoded['body'] = base64_encode($raw);
+
+        $result = $serializer->decode($encoded);
+        self::assertInstanceOf(MessageDecodingFailedException::class, $result->getMessage());
+        self::assertSame(2, RedeliveryStamp::getRetryCountFromEnvelope($result), 'RedeliveryStamp survives so the retry counter advances');
+
+        // re-sending the failure must replay the original bytes, not compress/encrypt the exception object again
+        $resent = $serializer->encode($result);
+        self::assertSame($encoded['body'], $resent['body']);
+        self::assertSame('xchacha20poly1305', self::headers($resent)[PayloadTransformingSerializer::HEADER_ENCRYPTION] ?? null);
+    }
+
+    private static function wrapsFailures(): bool
+    {
+        return (new \ReflectionClass(MessageDecodingFailedException::class))->hasMethod('wrap');
     }
 
     /**
