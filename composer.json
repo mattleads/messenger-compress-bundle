@@ -1,0 +1,56 @@
+{
+    "name": "mattleads/messenger-compress-bundle",
+    "description": "Transparent, per-message compression and authenticated encryption for Symfony Messenger payloads — opt in with a stamp or enforce per transport.",
+    "type": "symfony-bundle",
+    "license": "MIT",
+    "keywords": ["symfony", "messenger", "compression", "encryption", "sodium", "zstd", "queue", "redis", "rabbitmq", "amqp", "sqs"],
+    "authors": [
+        { "name": "Matvei (Matt) Mochalkin", "email": "matthew.mochalkin@gmail.com", "homepage": "https://github.com/mattleads" }
+    ],
+    "homepage": "https://github.com/mattleads/messenger-compress-bundle",
+    "support": {
+        "issues": "https://github.com/mattleads/messenger-compress-bundle/issues",
+        "source": "https://github.com/mattleads/messenger-compress-bundle"
+    },
+    "require": {
+        "php": ">=8.2",
+        "ext-zlib": "*",
+        "ext-sodium": "*",
+        "symfony/config": "^6.4|^7.0|^8.0",
+        "symfony/console": "^6.4|^7.0|^8.0",
+        "symfony/dependency-injection": "^6.4|^7.0|^8.0",
+        "symfony/http-kernel": "^6.4|^7.0|^8.0",
+        "symfony/messenger": "^6.4|^7.0|^8.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.75",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-symfony": "^2.0",
+        "phpunit/phpunit": "^11.5",
+        "symfony/framework-bundle": "^6.4|^7.0|^8.0",
+        "symfony/yaml": "^6.4|^7.0|^8.0"
+    },
+    "suggest": {
+        "ext-zstd": "Enables the zstd compressor (much faster than deflate at similar ratios)."
+    },
+    "autoload": {
+        "psr-4": { "MattLeads\\MessengerCompressBundle\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "MattLeads\\MessengerCompressBundle\\Tests\\": "tests/" }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": { "php-http/discovery": false }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "stan": "phpstan analyse",
+        "cs": "php-cs-fixer fix --dry-run --diff",
+        "cs:fix": "php-cs-fixer fix",
+        "check": ["@cs", "@stan", "@test"]
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
