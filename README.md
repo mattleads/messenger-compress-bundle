@@ -178,6 +178,10 @@ mattleads_messenger_compress:
         keys: {}                                     # id => base64 32-byte key
 ```
 
+## Demo application
+
+A runnable example with a Doctrine (SQLite) transport lives in [`mattleads/messenger-compress-demo`](https://github.com/mattleads/messenger-compress-demo). It lets you inspect what Messenger physically stores with and without the bundle: PII in plain vs encrypted rows, automatic and explicit compression (759 KB → 98 KB), consumer-side `TransformedStamp` logging, key rotation between producers and consumers, and a tampered ciphertext ending on the failure transport.
+
 ## Testing
 
 ```bash
